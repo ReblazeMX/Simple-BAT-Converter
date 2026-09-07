@@ -1,0 +1,43 @@
+# Build
+build/
+out/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+compile_commands.json
+CTestTestfile.cmake
+*.vcxproj
+*.vcxproj.filters
+*.sln
+*.user
+.vs/
+.vscode/
+*.dir/
+
+
+# Binaries
+*.exe
+*.obj
+*.o
+*.a
+*.lib
+*.dll
+*.pdb
+*.ilk
+*.exp
+
+# Generated
+**/generated/
+
+# IDE / OS
+.idea/
+*.swp
+*~
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Test outputs
+tests/out/

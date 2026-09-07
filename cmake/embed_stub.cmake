@@ -1,0 +1,48 @@
+# Convert a binary file into a C++ header with a uint8_t array.
+if(NOT DEFINED INPUT_FILE OR NOT DEFINED OUTPUT_FILE OR NOT DEFINED VARIABLE_NAME)
+  message(FATAL_ERROR "INPUT_FILE, OUTPUT_FILE and VARIABLE_NAME are required")
+endif()
+
+if(NOT EXISTS "${INPUT_FILE}")
+  message(FATAL_ERROR "Input file not found: ${INPUT_FILE}")
+endif()
+
+file(READ "${INPUT_FILE}" HEX_CONTENT HEX)
+string(LENGTH "${HEX_CONTENT}" HEX_LEN)
+math(EXPR BYTE_COUNT "${HEX_LEN} / 2")
+
+set(HEADER "")
+string(APPEND HEADER "// Auto-generated — do not edit\n")
+string(APPEND HEADER "#pragma once\n")
+string(APPEND HEADER "#include <cstdint>\n")
+string(APPEND HEADER "#include <cstddef>\n\n")
+string(APPEND HEADER "namespace sbc {\n\n")
+string(APPEND HEADER "inline constexpr std::size_t ${VARIABLE_NAME}Size = ${BYTE_COUNT};\n")
+string(APPEND HEADER "inline constexpr std::uint8_t ${VARIABLE_NAME}[] = {\n")
+
+set(LINE "  ")
+set(COL 0)
+set(I 0)
+while(I LESS HEX_LEN)
+  string(SUBSTRING "${HEX_CONTENT}" ${I} 2 BYTE_HEX)
+  string(APPEND LINE "0x${BYTE_HEX},")
+  math(EXPR COL "${COL} + 1")
+  math(EXPR I "${I} + 2")
+  if(COL EQUAL 12)
+    string(APPEND HEADER "${LINE}\n")
+    set(LINE "  ")
+    set(COL 0)
+  else()
+    string(APPEND LINE " ")
+  endif()
+endwhile()
+
+if(NOT COL EQUAL 0)
+  string(APPEND HEADER "${LINE}\n")
+endif()
+
+string(APPEND HEADER "};\n\n")
+string(APPEND HEADER "} // namespace sbc\n")
+
+file(WRITE "${OUTPUT_FILE}" "${HEADER}")
+message(STATUS "Embedded ${BYTE_COUNT} bytes -> ${OUTPUT_FILE}")
