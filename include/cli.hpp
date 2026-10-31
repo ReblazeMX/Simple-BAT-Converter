@@ -23,6 +23,7 @@ struct Options {
   std::wstring outputPath;      // -o / --output
   std::wstring outputName;      // -n / --name
   std::wstring outputDir;       // -d / --output-dir
+  std::wstring iconPath;        // -i / --icon
 
   bool force = false;
   bool quiet = false;

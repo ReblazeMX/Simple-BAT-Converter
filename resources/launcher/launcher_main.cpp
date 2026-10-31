@@ -22,6 +22,11 @@ namespace {
 
 constexpr char kMagic[4] = {'S', 'B', 'C', '1'};
 
+// Payload flag bits (must match payload.hpp).
+constexpr std::uint32_t kFlagNoPause = 1u << 1;
+constexpr std::uint32_t kFlagAlwaysPause = 1u << 2;
+constexpr std::uint32_t kFlagKeepTemp = 1u << 3;
+
 #pragma pack(push, 1)
 struct Trailer {
   std::uint16_t nameLen;
@@ -217,40 +222,61 @@ void deleteTree(const std::wstring& dir) {
   RemoveDirectoryW(dir.c_str());
 }
 
-std::wstring quoteArg(const std::wstring& s) {
-  // Windows command-line escaping for CreateProcess
-  if (s.find_first_of(L" \t\"") == std::wstring::npos) return s;
+// Build a single argument token for the cmd.exe /C command line so that the
+// argument survives cmd's own re-parsing as a single literal value. Without
+// this, metacharacters (& | < > ^ ( ) spaces and unquoted %) would be
+// interpreted by cmd.exe, corrupting arguments or injecting commands.
+//
+// Strategy:
+//   - No spaces/tabs: caret-escape the metacharacters. This correctly handles
+//     %, !, &, |, <, >, ^, ( ) and a literal double-quote.
+//   - Spaces but no double-quote: wrap in double quotes (metacharacters are
+//     literal inside quotes; a percent sign still expands, an accepted edge
+//     case for space-containing arguments).
+//   - Empty argument: emit an empty quoted token.
+namespace {
+
+const wchar_t* kCmdMetachars = L"&|<>^()%!\"";
+
+std::wstring caretEscape(const std::wstring& s, bool escapeSpace) {
   std::wstring out;
-  out.push_back(L'"');
-  int backslashes = 0;
+  out.reserve(s.size() + 8);
   for (wchar_t c : s) {
-    if (c == L'\\') {
-      ++backslashes;
-    } else if (c == L'"') {
-      out.append(static_cast<std::size_t>(backslashes) * 2 + 1, L'\\');
-      out.push_back(L'"');
-      backslashes = 0;
-    } else {
-      if (backslashes) {
-        out.append(static_cast<std::size_t>(backslashes), L'\\');
-        backslashes = 0;
-      }
-      out.push_back(c);
+    if (wcschr(kCmdMetachars, c) != nullptr ||
+        (escapeSpace && (c == L' ' || c == L'\t'))) {
+      out.push_back(L'^');
     }
+    out.push_back(c);
   }
-  if (backslashes) out.append(static_cast<std::size_t>(backslashes) * 2, L'\\');
-  out.push_back(L'"');
   return out;
+}
+
+} // namespace
+
+std::wstring cmdEscapeArg(const std::wstring& s) {
+  if (s.empty()) return L"\"\"";
+  const bool hasSpace = s.find_first_of(L" \t") != std::wstring::npos;
+  const bool hasQuote = s.find(L'"') != std::wstring::npos;
+  if (!hasSpace) return caretEscape(s, false);
+  if (!hasQuote) return L"\"" + s + L"\"";
+  // Space and a double-quote together: no fully reliable quoting exists, so
+  // caret-escape everything (spaces included) as a best effort.
+  return caretEscape(s, true);
 }
 
 std::wstring buildCmdLine(const std::wstring& scriptPath, int argc, wchar_t** argv) {
   // cmd.exe /D /S /C ""script" arg1 arg2 ..."
-  // /D disables AutoRun, /S modifies /C quote handling.
+  // /D disables AutoRun, /S modifies /C quote handling. The script path is
+  // always quoted (it is under our control and sanitized, so it contains no
+  // double-quotes or metacharacters) so the /S outer-quote stripping stays
+  // symmetric even when the first argument needs quoting.
   std::wstring cmd = L"cmd.exe /D /S /C \"";
-  cmd += quoteArg(scriptPath);
+  cmd.push_back(L'"');
+  cmd += scriptPath;
+  cmd.push_back(L'"');
   for (int i = 1; i < argc; ++i) {
     cmd.push_back(L' ');
-    cmd += quoteArg(argv[i]);
+    cmd += cmdEscapeArg(argv[i]);
   }
   cmd.push_back(L'"');
   return cmd;
@@ -267,13 +293,21 @@ int runScript(const std::wstring& scriptPath, int argc, wchar_t** argv) {
   std::vector<wchar_t> mutableCmd(cmdLine.begin(), cmdLine.end());
   mutableCmd.push_back(L'\0');
 
+  // GUI (no-console) builds must not pop up a console window for the spawned
+  // cmd.exe process.
+#if SBC_CONSOLE
+  const DWORD createFlags = 0;
+#else
+  const DWORD createFlags = CREATE_NO_WINDOW;
+#endif
+
   const BOOL ok = CreateProcessW(
       nullptr,
       mutableCmd.data(),
       nullptr,
       nullptr,
       FALSE,
-      0,
+      createFlags,
       nullptr,
       nullptr, // inherit current working directory
       &si,
@@ -342,12 +376,9 @@ void maybePauseAfterScript(std::uint32_t flags) {
   (void)flags;
   return;
 #else
-  constexpr std::uint32_t kNoPause = 1u << 1;
-  constexpr std::uint32_t kAlwaysPause = 1u << 2;
+  if (flags & kFlagNoPause) return;
 
-  if (flags & kNoPause) return;
-
-  const bool pause = (flags & kAlwaysPause) || ownsConsoleAlone();
+  const bool pause = (flags & kFlagAlwaysPause) || ownsConsoleAlone();
   if (pause) waitForKeypress();
 #endif
 }
@@ -395,11 +426,18 @@ int launcherMain(int argc, wchar_t** argv) {
 
   const int code = runScript(scriptPath, argc, argv);
 
-  // Best-effort cleanup before pause so temp files are not left if the user
-  // leaves the window open.
-  SetFileAttributesW(scriptPath.c_str(), FILE_ATTRIBUTE_NORMAL);
-  DeleteFileW(scriptPath.c_str());
-  deleteTree(tempDir);
+  if (payload.flags & kFlagKeepTemp) {
+    // User asked to keep the extracted script (e.g. for debugging).
+#if SBC_CONSOLE
+    fwprintf(stderr, L"SBC launcher: kept temporary files in: %ls\n", tempDir.c_str());
+#endif
+  } else {
+    // Best-effort cleanup before pause so temp files are not left if the user
+    // leaves the window open.
+    SetFileAttributesW(scriptPath.c_str(), FILE_ATTRIBUTE_NORMAL);
+    DeleteFileW(scriptPath.c_str());
+    deleteTree(tempDir);
+  }
 
   maybePauseAfterScript(payload.flags);
 

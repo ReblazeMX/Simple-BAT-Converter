@@ -48,6 +48,7 @@ void printHelp() {
       << L"  -o, --output <file>        Output executable path\n"
       << L"  -n, --name <name>          Output executable base name\n"
       << L"  -d, --output-dir <dir>     Output directory\n"
+      << L"  -i, --icon <file.ico>      Embed an icon into the generated executable\n"
       << L"  -f, --force                Overwrite an existing output file\n"
       << L"  -q, --quiet                Suppress non-essential output\n"
       << L"  -v, --verbose              Enable verbose diagnostics\n"
@@ -58,8 +59,8 @@ void printHelp() {
       << L"      --console              Build a console executable (default)\n"
       << L"      --pause                Always pause after the script finishes\n"
       << L"      --no-pause             Never pause after the script finishes\n"
-      << L"      --keep-temp            Keep temporary files (reserved)\n"
-      << L"      --clean                Remove temporary build files (reserved)\n"
+      << L"      --keep-temp            Keep the extracted script after running\n"
+      << L"      --clean                Remove leftover sbc temporary directories\n"
       << L"      --dry-run              Show actions without writing the executable\n"
       << L"      --info                 Show information about the input file\n\n"
       << L"Notes:\n"
@@ -71,6 +72,7 @@ void printHelp() {
       << L"  sbc -c example.bat -o example.exe\n"
       << L"  sbc --compile script.cmd --output myapp.exe\n"
       << L"  sbc -c script.bat -d build\n"
+      << L"  sbc -c script.bat --icon app.ico\n"
       << L"  sbc -c script.bat -f\n"
       << L"  sbc -c script.bat --verbose\n"
       << L"  sbc -c script.bat --no-console\n"
@@ -102,51 +104,55 @@ ParseResult parseArguments(int argc, wchar_t** argv) {
     return argv[i];
   };
 
+  bool positionalOnly = false;
+
   for (int i = 1; i < argc && result.ok; ++i) {
     const std::wstring arg = argv[i];
 
-    if (eq(arg, L"-h") || eq(arg, L"--help") || eq(arg, L"/?")) {
+    if (!positionalOnly && eq(arg, L"--")) {
+      // Everything after "--" is treated as a positional argument.
+      positionalOnly = true;
+    } else if (!positionalOnly && (eq(arg, L"-h") || eq(arg, L"--help") || eq(arg, L"/?"))) {
       setAction(opt, Action::Help, result.errorMessage, result.ok);
-    } else if (eq(arg, L"--version")) {
+    } else if (!positionalOnly && eq(arg, L"--version")) {
       setAction(opt, Action::Version, result.errorMessage, result.ok);
-    } else if (eq(arg, L"-v") && opt.action == Action::None && i + 1 >= argc) {
-      // bare -v with nothing else => version (common UX); if more args, verbose
-      setAction(opt, Action::Version, result.errorMessage, result.ok);
-    } else if (eq(arg, L"--license")) {
+    } else if (!positionalOnly && eq(arg, L"--license")) {
       setAction(opt, Action::License, result.errorMessage, result.ok);
-    } else if (eq(arg, L"--info")) {
+    } else if (!positionalOnly && eq(arg, L"--info")) {
       setAction(opt, Action::Info, result.errorMessage, result.ok);
-    } else if (eq(arg, L"--clean")) {
+    } else if (!positionalOnly && eq(arg, L"--clean")) {
       setAction(opt, Action::Clean, result.errorMessage, result.ok);
-    } else if (eq(arg, L"-c") || eq(arg, L"--compile")) {
+    } else if (!positionalOnly && (eq(arg, L"-c") || eq(arg, L"--compile"))) {
       setAction(opt, Action::Compile, result.errorMessage, result.ok);
       opt.inputPath = requireValue(i, arg.c_str());
-    } else if (eq(arg, L"-o") || eq(arg, L"--output")) {
+    } else if (!positionalOnly && (eq(arg, L"-o") || eq(arg, L"--output"))) {
       opt.outputPath = requireValue(i, arg.c_str());
-    } else if (eq(arg, L"-n") || eq(arg, L"--name")) {
+    } else if (!positionalOnly && (eq(arg, L"-n") || eq(arg, L"--name"))) {
       opt.outputName = requireValue(i, arg.c_str());
-    } else if (eq(arg, L"-d") || eq(arg, L"--output-dir")) {
+    } else if (!positionalOnly && (eq(arg, L"-d") || eq(arg, L"--output-dir"))) {
       opt.outputDir = requireValue(i, arg.c_str());
-    } else if (eq(arg, L"-f") || eq(arg, L"--force")) {
+    } else if (!positionalOnly && (eq(arg, L"-i") || eq(arg, L"--icon"))) {
+      opt.iconPath = requireValue(i, arg.c_str());
+    } else if (!positionalOnly && (eq(arg, L"-f") || eq(arg, L"--force"))) {
       opt.force = true;
-    } else if (eq(arg, L"-q") || eq(arg, L"--quiet")) {
+    } else if (!positionalOnly && (eq(arg, L"-q") || eq(arg, L"--quiet"))) {
       opt.quiet = true;
-    } else if (eq(arg, L"-v") || eq(arg, L"--verbose")) {
+    } else if (!positionalOnly && (eq(arg, L"-v") || eq(arg, L"--verbose"))) {
       opt.verbose = true;
-    } else if (eq(arg, L"--no-console")) {
+    } else if (!positionalOnly && eq(arg, L"--no-console")) {
       opt.noConsole = true;
-    } else if (eq(arg, L"--console")) {
+    } else if (!positionalOnly && eq(arg, L"--console")) {
       opt.console = true;
       opt.noConsole = false;
-    } else if (eq(arg, L"--pause")) {
+    } else if (!positionalOnly && eq(arg, L"--pause")) {
       opt.pauseMode = 1;
-    } else if (eq(arg, L"--no-pause")) {
+    } else if (!positionalOnly && eq(arg, L"--no-pause")) {
       opt.pauseMode = 2;
-    } else if (eq(arg, L"--keep-temp")) {
+    } else if (!positionalOnly && eq(arg, L"--keep-temp")) {
       opt.keepTemp = true;
-    } else if (eq(arg, L"--dry-run")) {
+    } else if (!positionalOnly && eq(arg, L"--dry-run")) {
       opt.dryRun = true;
-    } else if (startsWith(arg, L"-")) {
+    } else if (!positionalOnly && startsWith(arg, L"-")) {
       result.ok = false;
       result.exitCode = ExitCode::InvalidArguments;
       result.errorMessage = "Error: Unknown option: " + wideToUtf8(arg);
@@ -164,9 +170,6 @@ ParseResult parseArguments(int argc, wchar_t** argv) {
   }
 
   if (!result.ok) return result;
-
-  // Disambiguate lone -v: if action already version from bare -v, fine.
-  // If user passed -v with compile, verbose was set via the other branch.
 
   if (opt.action == Action::None) {
     if (!opt.inputPath.empty()) {

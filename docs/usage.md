@@ -37,6 +37,30 @@ sbc -c app.bat -n MyApp -d build
 sbc -c app.bat --dry-run --verbose
 ```
 
+The output `.exe` defaults to the current working directory, named after the input file.
+
+---
+
+## Custom icon
+
+Embed a `.ico` file as the generated executable's icon with `--icon` (or `-i`):
+
+```bat
+sbc -c app.bat --icon app.ico -o app.exe
+```
+
+The icon works for both console and `--no-console` builds and is stored as a native Windows icon resource.
+
+---
+
+## Keeping and cleaning temporary files
+
+By default the generated EXE deletes its extracted script after running. To keep it (for debugging), compile with `--keep-temp`; the launcher then prints the location of the retained files. Leftovers can be removed at any time with:
+
+```bat
+sbc --clean
+```
+
 ---
 
 ## Console vs no-console
@@ -57,7 +81,7 @@ Useful for scripts launched from shortcuts that should not flash a console:
 sbc -c silent.bat --no-console -o silent.exe
 ```
 
-Note: `echo` output will not be visible without a console.
+The launcher runs `cmd.exe` with `CREATE_NO_WINDOW`, so no console window appears at all and `echo` output is not visible. Interactive scripts (e.g. `pause` or `set /p`) should use the default console mode instead.
 
 ---
 
@@ -104,7 +128,6 @@ Shows path, size, default output name, and selected subsystem.
 ```bat
 sbc -h
 sbc --help
-sbc -v
 sbc --version
 sbc --license
 ```

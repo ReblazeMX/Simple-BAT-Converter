@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <stdexcept>
+#include <cwchar>
 #include <cwctype>
 
 #pragma comment(lib, "shlwapi.lib")
@@ -97,10 +98,13 @@ bool createDirectories(const std::wstring& path) {
 }
 
 std::wstring absolutePath(const std::wstring& path) {
-  wchar_t buf[MAX_PATH * 4];
-  const DWORD n = GetFullPathNameW(path.c_str(), static_cast<DWORD>(std::size(buf)), buf, nullptr);
-  if (n == 0 || n >= std::size(buf)) return normalizeSlashes(path);
-  return normalizeSlashes(std::wstring(buf, n));
+  const DWORD need = GetFullPathNameW(path.c_str(), 0, nullptr, nullptr);
+  if (need == 0) return normalizeSlashes(path);
+  std::wstring buf(need, L'\0');
+  const DWORD n = GetFullPathNameW(path.c_str(), need, buf.data(), nullptr);
+  if (n == 0 || n >= need) return normalizeSlashes(path);
+  buf.resize(n);
+  return normalizeSlashes(buf);
 }
 
 std::wstring fileName(const std::wstring& path) {
@@ -143,6 +147,30 @@ std::wstring joinPath(const std::wstring& a, const std::wstring& b) {
   if (!left.empty() && left.back() == L'\\') left.pop_back();
   while (!right.empty() && right.front() == L'\\') right.erase(right.begin());
   return left + L'\\' + right;
+}
+
+bool iequalPath(const std::wstring& a, const std::wstring& b) {
+  return CompareStringOrdinal(a.c_str(), -1, b.c_str(), -1, TRUE) == CSTR_EQUAL;
+}
+
+bool removeTree(const std::wstring& dir) {
+  std::wstring pattern = dir + L"\\*";
+  WIN32_FIND_DATAW fd{};
+  HANDLE find = FindFirstFileW(pattern.c_str(), &fd);
+  if (find != INVALID_HANDLE_VALUE) {
+    do {
+      if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
+      const std::wstring child = dir + L"\\" + fd.cFileName;
+      if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+        removeTree(child);
+      } else {
+        SetFileAttributesW(child.c_str(), FILE_ATTRIBUTE_NORMAL);
+        DeleteFileW(child.c_str());
+      }
+    } while (FindNextFileW(find, &fd));
+    FindClose(find);
+  }
+  return RemoveDirectoryW(dir.c_str()) != 0;
 }
 
 std::vector<std::uint8_t> readFileBytes(const std::wstring& path) {

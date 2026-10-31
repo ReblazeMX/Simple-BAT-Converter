@@ -31,10 +31,12 @@ example.exe
 - Convert `.bat` and `.cmd` to standalone `.exe`
 - Real Windows PE output (not a renamed batch file)
 - Embedded script payload — no external `.bat` needed at runtime
-- Argument forwarding (`%1`, `%2`, `%*`)
+- Argument forwarding (`%1`, `%2`, `%*`) with metacharacters (`& | < > ^ ( ) % ! "` and spaces) preserved verbatim
 - Console or GUI (`--no-console`) subsystem
+- Custom executable icon via `--icon <file.ico>`
 - Auto-pause when double-clicked from Explorer (window stays open)
 - `--pause` / `--no-pause` to control end-of-run behavior
+- `--keep-temp` to keep the extracted script for debugging, `--clean` to remove leftovers
 - Unicode-aware paths (UTF-16 Windows APIs)
 - Force overwrite, quiet/verbose modes, dry-run, info
 - Zero third-party dependencies (C++17 + Windows API)
@@ -102,19 +104,32 @@ sbc -c example.bat
 sbc -c example.bat -o example.exe
 sbc --compile script.cmd --output myapp.exe
 sbc -c script.bat -d build
+sbc -c script.bat --icon app.ico
 sbc -c script.bat -f
 sbc -c script.bat --verbose
 sbc -c script.bat --no-console
 sbc -c script.bat --pause
 sbc -c script.bat --no-pause
+sbc -c script.bat --keep-temp
 ```
+
+The output `.exe` defaults to the **current working directory** (named after the input file). Use `-o`, `-d`, or `-n` to place it elsewhere.
+
+#### Embedding an icon
+
+`--icon` (or `-i`) injects a `.ico` file as the generated executable's icon:
+
+```bat
+sbc -c app.bat --icon app.ico -o app.exe
+```
+
+The icon is embedded as a native Windows icon resource; it works for both console and `--no-console` builds.
 
 ### Other commands
 
 ```bat
 sbc -h
 sbc --help
-sbc -v
 sbc --version
 sbc --license
 sbc --info script.bat
@@ -150,6 +165,7 @@ It does **not** pause when launched from an existing Command Prompt or PowerShel
 | `-o, --output <file>` | Output `.exe` path |
 | `-n, --name <name>` | Output base name |
 | `-d, --output-dir <dir>` | Output directory |
+| `-i, --icon <file.ico>` | Embed a custom icon into the generated `.exe` |
 | `-f, --force` | Overwrite existing output |
 | `-q, --quiet` | Suppress non-essential output |
 | `-v, --verbose` | Verbose diagnostics |
@@ -160,10 +176,11 @@ It does **not** pause when launched from an existing Command Prompt or PowerShel
 | `--console` | Console subsystem (default) |
 | `--pause` | Always pause after the embedded script finishes |
 | `--no-pause` | Never pause after the embedded script finishes |
-| `--keep-temp` | Reserved |
-| `--clean` | Clean temporary build files |
+| `--keep-temp` | Keep the extracted script after running |
+| `--clean` | Remove leftover `%TEMP%\sbc_*` directories |
 | `--dry-run` | Show actions without writing the EXE |
 | `--info` | Show input file information |
+| `--` | Treat all following arguments as positional |
 
 ### Exit codes
 
@@ -188,6 +205,7 @@ It does **not** pause when launched from an existing Command Prompt or PowerShel
 2. **Conversion time (`sbc -c`)**  
    - Reads and validates the input script  
    - Selects the appropriate stub  
+   - Optionally injects a custom icon resource (`--icon`)  
    - Appends: `[script bytes][original name][trailer with magic SBC1]`  
    - Writes the combined image as the output EXE  
 
@@ -196,7 +214,7 @@ It does **not** pause when launched from an existing Command Prompt or PowerShel
    - Reads the trailer from EOF (magic `SBC1`)  
    - Extracts the script to a randomized folder under `%TEMP%`  
    - Runs `cmd.exe /D /S /C` with the script and forwarded arguments  
-   - Deletes temporary files  
+   - Deletes temporary files (unless built with `--keep-temp`)  
    - Optionally pauses (auto / always / never — see `--pause` / `--no-pause`)  
    - Returns the script’s exit code  
 
@@ -209,7 +227,7 @@ Batch language features (`set`, `if`, `for`, `goto`, `call`, environment variabl
 - Windows only (PE + `cmd.exe`)
 - Generated EXEs are not obfuscated or encrypted; the script can be recovered from the binary
 - Very large scripts increase EXE size one-to-one with the payload
-- `--no-console` hides the console; scripts that need interactive console I/O should use the default console mode
+- `--no-console` fully suppresses the console window, so `echo` output is not visible; scripts that need interactive console I/O should use the default console mode
 - Pause-on-exit applies to console builds; use `--pause` / `--no-pause` to override the default auto behavior
 - Antivirus products may flag generic “script packed into EXE” patterns; this is a known class of false positives for packagers
 
@@ -266,6 +284,7 @@ SimpleBatConverter/
 │   ├── compiler.hpp
 │   ├── exit_codes.hpp
 │   ├── file_utils.hpp
+│   ├── icon.hpp
 │   ├── payload.hpp
 │   └── version.hpp
 ├── src/
@@ -273,6 +292,7 @@ SimpleBatConverter/
 │   ├── cli.cpp
 │   ├── compiler.cpp
 │   ├── file_utils.cpp
+│   ├── icon.cpp
 │   └── version.cpp
 ├── resources/
 │   ├── sbc.rc
@@ -281,7 +301,8 @@ SimpleBatConverter/
 ├── tests/
 │   ├── basic.bat
 │   ├── arguments.bat
-│   └── environment.bat
+│   ├── environment.bat
+│   └── quoting.bat
 └── docs/
     └── usage.md
 ```

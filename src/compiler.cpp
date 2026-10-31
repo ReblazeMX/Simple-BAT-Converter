@@ -1,12 +1,22 @@
 #include "compiler.hpp"
 #include "exit_codes.hpp"
 #include "file_utils.hpp"
+#include "icon.hpp"
 #include "payload.hpp"
 #include "version.hpp"
 
 #include "stub_console.hpp"
 #include "stub_noconsole.hpp"
 
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+
+#include <cwchar>
 #include <iostream>
 #include <vector>
 
@@ -111,6 +121,14 @@ CompileResult compileBatch(const Options& opt) {
     return result;
   }
 
+  // Guard against overwriting the input script when -o points at it.
+  if (iequalPath(input, output)) {
+    result.exitCode = ExitCode::OutputError;
+    result.message = "Error: Output path is the same as the input file.";
+    errorLine(opt, result.message);
+    return result;
+  }
+
   if (!opt.quiet) {
     std::wcout << utf8ToWide(kProductName) << L" " << utf8ToWide(kVersionString) << L"\n";
     std::wcout << L"Author: " << utf8ToWide(kAuthor) << L"\n\n";
@@ -143,6 +161,13 @@ CompileResult compileBatch(const Options& opt) {
 
   verbose(opt, L"[*] Script size: " + std::to_wstring(script.size()) + L" bytes");
 
+  if (script.empty()) {
+    result.exitCode = ExitCode::GeneralError;
+    result.message = "Error: Input file is empty.";
+    errorLine(opt, result.message);
+    return result;
+  }
+
   const bool useNoConsole = opt.noConsole;
   const std::uint8_t* stub = useNoConsole ? kStubNoConsole : kStubConsole;
   const std::size_t stubSize = useNoConsole ? kStubNoConsoleSize : kStubConsoleSize;
@@ -155,6 +180,7 @@ CompileResult compileBatch(const Options& opt) {
   if (useNoConsole) flags |= kFlagNoConsole;
   if (opt.pauseMode == 1) flags |= kFlagAlwaysPause;
   if (opt.pauseMode == 2) flags |= kFlagNoPause;
+  if (opt.keepTemp) flags |= kFlagKeepTemp;
 
   // Prefer original filename so %~nx0-style usage is closer to real batch
   const std::string origName = wideToUtf8(fileName(input));
@@ -167,9 +193,55 @@ CompileResult compileBatch(const Options& opt) {
 
   auto payload = buildPayload(script, origName, flags);
 
+  // Start from the stub bytes, injecting the icon first (before the payload is
+  // appended) so the icon resource never disturbs the trailing payload data.
+  std::vector<std::uint8_t> base;
+  if (!opt.iconPath.empty()) {
+    const std::wstring iconInput = absolutePath(opt.iconPath);
+    if (fileExtension(iconInput) != L".ico") {
+      result.exitCode = ExitCode::UnsupportedFileType;
+      result.message = "Error: Icon file must have a .ico extension.";
+      errorLine(opt, result.message);
+      return result;
+    }
+    if (!fileExists(iconInput)) {
+      result.exitCode = ExitCode::InputNotFound;
+      result.message = "Error: Icon file does not exist:\n" + wideToUtf8(opt.iconPath);
+      errorLine(opt, result.message);
+      return result;
+    }
+
+    std::vector<std::uint8_t> ico;
+    try {
+      ico = readFileBytes(iconInput);
+    } catch (...) {
+      result.exitCode = ExitCode::GeneralError;
+      result.message = "Error: Failed to read icon file.";
+      errorLine(opt, result.message);
+      return result;
+    }
+
+    if (!isValidIco(ico)) {
+      result.exitCode = ExitCode::UnsupportedFileType;
+      result.message = "Error: Invalid .ico file.";
+      errorLine(opt, result.message);
+      return result;
+    }
+
+    info(opt, L"[+] Embedding icon...");
+    if (!embedIcon(std::vector<std::uint8_t>(stub, stub + stubSize), ico, base)) {
+      result.exitCode = ExitCode::BuildError;
+      result.message = "Error: Failed to embed icon into the executable.";
+      errorLine(opt, result.message);
+      return result;
+    }
+  } else {
+    base.assign(stub, stub + stubSize);
+  }
+
   std::vector<std::uint8_t> exe;
-  exe.reserve(stubSize + payload.size());
-  exe.insert(exe.end(), stub, stub + stubSize);
+  exe.reserve(base.size() + payload.size());
+  exe.insert(exe.end(), base.begin(), base.end());
   exe.insert(exe.end(), payload.begin(), payload.end());
 
   info(opt, L"[+] Building executable...");
@@ -225,16 +297,41 @@ int showInfo(const Options& opt) {
   std::wcout << L"Default out:   " << out << L"\n";
   std::wcout << L"Subsystem:     " << (opt.noConsole ? L"WINDOWS (no console)" : L"CONSOLE")
              << L"\n";
+  if (!opt.iconPath.empty()) {
+    std::wcout << L"Icon:          " << absolutePath(opt.iconPath) << L"\n";
+  }
   return ExitCode::Success;
 }
 
 int cleanTempFiles(const Options& opt) {
-  // Launcher uses %TEMP%\sbc_* folders cleaned at runtime.
-  // This command is a no-op placeholder that reports success.
+  // The launcher extracts scripts into %TEMP%\sbc_* directories and normally
+  // removes them at runtime. This command removes any leftovers (for example
+  // from executables built with --keep-temp or interrupted runs).
+  wchar_t tempRoot[MAX_PATH];
+  const DWORD tempLen = GetTempPathW(MAX_PATH, tempRoot);
+  if (tempLen == 0 || tempLen >= MAX_PATH) {
+    errorLine(opt, "Error: Failed to resolve the temporary directory.");
+    return ExitCode::GeneralError;
+  }
+
+  const std::wstring pattern = std::wstring(tempRoot) + L"sbc_*";
+  WIN32_FIND_DATAW fd{};
+  HANDLE find = FindFirstFileW(pattern.c_str(), &fd);
+  int removed = 0;
+  if (find != INVALID_HANDLE_VALUE) {
+    do {
+      if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+      if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
+      const std::wstring dir = std::wstring(tempRoot) + fd.cFileName;
+      if (removeTree(dir)) ++removed;
+    } while (FindNextFileW(find, &fd));
+    FindClose(find);
+  }
+
   if (!opt.quiet) {
     std::wcout << utf8ToWide(kProductName) << L" " << utf8ToWide(kVersionString) << L"\n\n";
-    std::wcout << L"[+] No leftover build temporary files to clean.\n";
-    std::wcout << L"    Runtime temps are removed by generated executables after each run.\n";
+    std::wcout << L"[+] Removed " << removed << L" temporary director"
+               << (removed == 1 ? L"y" : L"ies") << L".\n";
   }
   return ExitCode::Success;
 }

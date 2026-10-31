@@ -18,6 +18,8 @@ constexpr std::uint32_t kFlagNoConsole = 1u << 0;
 constexpr std::uint32_t kFlagNoPause = 1u << 1;
 // When set, always pause after the script in a console build.
 constexpr std::uint32_t kFlagAlwaysPause = 1u << 2;
+// When set, keep the extracted temporary script instead of deleting it.
+constexpr std::uint32_t kFlagKeepTemp = 1u << 3;
 
 #pragma pack(push, 1)
 struct PayloadTrailer {

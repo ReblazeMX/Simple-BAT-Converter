@@ -105,6 +105,7 @@ set(SBC_SOURCES
   src/cli.cpp
   src/compiler.cpp
   src/file_utils.cpp
+  src/icon.cpp
   src/version.cpp
 )
 
