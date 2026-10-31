@@ -1,8 +1,8 @@
 #include <winver.h>
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION     1,0,0,0
-PRODUCTVERSION  1,0,0,0
+FILEVERSION     1,1,0,0
+PRODUCTVERSION  1,1,0,0
 FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
 FILEFLAGS       0
 FILEOS          VOS_NT_WINDOWS32
@@ -15,12 +15,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "ReblazeMX"
             VALUE "FileDescription",  "Simple BAT/CMD to EXE Converter"
-            VALUE "FileVersion",      "1.0.0"
+            VALUE "FileVersion",      "1.1.0"
             VALUE "InternalName",     "sbc"
             VALUE "LegalCopyright",   "Copyright (c) 2026 ReblazeMX"
             VALUE "OriginalFilename", "sbc.exe"
             VALUE "ProductName",      "Simple BAT Converter"
-            VALUE "ProductVersion",   "1.0.0"
+            VALUE "ProductVersion",   "1.1.0"
         END
     END
     BLOCK "VarFileInfo"
