@@ -6,7 +6,7 @@ A lightweight Windows command-line utility for packaging BAT and CMD scripts int
 **Command:** `sbc`  
 **Author:** ReblazeMX  
 **License:** MIT  
-**Version:** 1.0.0
+**Version:** 1.1.0
 
 ---
 
@@ -311,7 +311,7 @@ SimpleBatConverter/
 
 ## Changelog
 
-### Unreleased
+### 1.1.0
 
 - **Fixed:** arguments containing `& | < > ^ ( ) % ! "` or spaces are now forwarded verbatim (previously `cmd.exe` re-parsed them, corrupting arguments or allowing command injection)
 - **Fixed:** `--no-console` now fully suppresses the console window
